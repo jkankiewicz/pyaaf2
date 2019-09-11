@@ -54,18 +54,7 @@ def decode_strong_ref_array(data):
 
 
 def decode_utf16be(data):
-    size = 0
-    data = bytearray(data)
-    for i in range(0, len(data), 2):
-        if i+1 >= len(data):
-            size = i
-            break
-
-        if data[i] == 0x00 and data[i+1] == 0x00:
-            size = i
-            break
-
-    return data[:size].decode('utf-16-be')
+    return data.decode('utf-16be').rstrip('\x00')
 
 def decode_auid(data):
     return AUID(bytes_be=data)
@@ -82,6 +71,22 @@ def decode_datadef(data):
 
 def decode_strongref(data):
     return MXFRef(bytes_be=data)
+
+def decode_indirect_value(data):
+    data = bytearray(data)
+    typedef = reverse_auid(decode_auid(data[:16]))
+    if typedef == AUID("00060e2b-3401-0401-4c00-021001000000"):
+        assert data[16] == 0x01 # byte order?
+        return data[17:].decode('utf-16le').rstrip('\x00')
+    elif typedef == AUID("00060e2b-3401-0401-4201-100200000000"):
+        assert data[16] == 0x01# byte order?
+        return data[17:].decode('utf-16be').rstrip('\x00')
+    elif typedef == AUID("00060e2b-3401-0401-4c00-070101000000"):
+        assert data[16] == 0x01# byte order?
+        return struct.unpack(b"<i", data[17:])[0]
+    else:
+        # unhandled indirect type
+        return
 
 def decode_rational(data):
     f = BytesIO(data)
@@ -169,6 +174,10 @@ class MXFObject(object):
                 self.data['AppCode'] = read_s32be(BytesIO(data))
             elif uid == AUID("060e2b34-0101-0109-0601-010406100000"):
                 self.data['SubDescriptors'] = decode_strong_ref_array(data)
+            elif uid == AUID("a01c0004-ac96-9f50-6095-818347b111d4"):
+                self.data["MobAttributeList"] = decode_strong_ref_array(data)
+            elif uid == AUID("a01c0004-ac96-9f50-6095-818547b111d4"):
+                self.data["TaggedValueAttributeList"] = decode_strong_ref_array(data)
 
     def resolve_ref(self, key):
         ref = self.data.get(key, None)
@@ -229,6 +238,8 @@ class MXFPackage(MXFObject):
             self.data['CreationTime'] = decode_timestamp(data)
         elif tag == 0x4408:
             self.data['UsageCode'] = decode_auid(data) # doesn't appear reversed...
+        elif tag == 0x4406:
+            self.data['UserComments'] = decode_strong_ref_array(data)
 
     @property
     def mob_id(self):
@@ -256,6 +267,16 @@ class MXFPackage(MXFObject):
         for key in ('LastModified', 'CreationTime', 'UsageCode', 'AppCode'):
             if key in self.data:
                 mob[key].value = self.data[key]
+
+        for item in self.iter_strong_refs('UserComments'):
+            tag = item.link()
+            if tag:
+                mob['UserComments'].append(tag)
+
+        for item in self.iter_strong_refs('MobAttributeList'):
+            tag = item.link()
+            if tag:
+                mob['MobAttributeList'].append(tag)
 
         if 'Descriptor' in self.data:
             d = self.resolve_ref('Descriptor')
@@ -729,6 +750,37 @@ class MXFEssenceData(MXFObject):
 
         if tag == 0x2701:
             self.data['MobID'] = decode_mob_id(data)
+
+@register_mxf_class
+class MXFTaggedValue(MXFObject):
+    class_id = AUID("060e2b34-0253-0101-0d01-010101013f00")
+
+    def create_aaf_instance(self):
+        return self.root.aaf.create.TaggedValue()
+
+    def read_tag(self, tag, data):
+        super(MXFTaggedValue, self).read_tag(tag, data)
+
+        if tag == 0x5001:
+            self.data['Name'] = decode_utf16be(data)
+        elif tag == 0x5003:
+            self.data['Value'] = decode_indirect_value(data)
+
+    def link(self):
+        v = self.data.get("Value", None)
+        if v is None:
+            return
+
+        tag = self.create_aaf_instance()
+        tag.name = self.data["Name"]
+        tag.value = v
+
+        for item in self.iter_strong_refs('TaggedValueAttributeList'):
+            attr = item.link()
+            if attr:
+                tag['TaggedValueAttributeList'].append(attr)
+
+        return tag
 
 def ber_length(f):
     length = read_u8(f)

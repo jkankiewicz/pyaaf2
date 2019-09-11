@@ -1,5 +1,12 @@
+from __future__ import (
+    unicode_literals,
+    absolute_import,
+    print_function,
+    division,
+    )
 import sys
-from PyQt4 import QtCore
+from PySide2 import QtCore
+from PySide2 import QtWidgets
 
 import aaf2
 
@@ -37,7 +44,7 @@ class TreeItem(object):
             t = TreeItem(item ,self, row)
         else:
             return None
-        print row, item
+        print(row, item)
         self.children[row] = t
         return t
 
@@ -117,8 +124,8 @@ class AAFModel(QtCore.QAbstractItemModel):
 
     def headerData(self, column, orientation,role):
         if orientation == QtCore.Qt.Horizontal and role == QtCore.Qt.DisplayRole:
-            return QtCore.QVariant(self.headers[column])
-        return QtCore.QVariant()
+            return self.headers[column]
+        return None
 
     def columnCount(self,index):
         #item = self.getItem(index)
@@ -177,9 +184,53 @@ class AAFModel(QtCore.QAbstractItemModel):
                 return item
         return self.rootItem
 
+class Window(QtWidgets.QTreeView):
+    def __init__(self, options):
+        super(Window, self).__init__()
+
+        self.options = options
+
+        self.resize(700,600)
+        self.setAlternatingRowColors(True)
+        self.setUniformRowHeights(True)
+
+    def setFilePath(self, path):
+        print(path)
+        f = aaf2.open(file_path)
+
+        root = f.content
+        if options.toplevel:
+            root = list(f.content.toplevel())
+        if options.compmobs:
+            root = list(f.content.compositionmobs())
+
+        if options.mastermobs:
+            root = list(f.content.mastermobs())
+
+        if options.sourcemobs:
+           root = list(f.content.GetSourceMobs())
+
+        if options.dictionary:
+            root = f.dictionary
+
+        if options.metadict:
+            root = f.metadict
+
+        if options.root:
+            root = f.root
+
+        model = AAFModel(root)
+
+        self.setModel(model)
+
+        self.setWindowTitle(file_path)
+        self.expandToDepth(1)
+        self.resizeColumnToContents(0)
+        self.resizeColumnToContents(1)
+
 if __name__ == "__main__":
 
-    from PyQt4 import QtGui
+    from PySide2 import QtWidgets
     from optparse import OptionParser
 
     parser = OptionParser()
@@ -198,44 +249,17 @@ if __name__ == "__main__":
 
     file_path = args[0]
 
-    f = aaf2.open(file_path)
+    app = QtWidgets.QApplication(sys.argv)
 
-    root = f.content
-    if options.toplevel:
-        root = list(f.content.toplevel())
-    if options.compmobs:
-        root = list(f.content.compositionmobs())
+    tree = QtWidgets.QTreeView()
 
-    if options.mastermobs:
-        root = list(f.content.mastermobs())
+    window = Window(options)
 
-    if options.sourcemobs:
-       root = list(f.content.GetSourceMobs())
+    window.setFilePath(file_path)
 
-    if options.dictionary:
-        root = f.dictionary
+    window.show()
 
-    if options.metadict:
-        root = f.metadict
-
-    if options.root:
-        root = f.root
-
-    app = QtGui.QApplication(sys.argv)
-
-    model = AAFModel(root)
-
-    tree = QtGui.QTreeView()
-    # tree = QtGui.QColumnView()
-    tree.setModel(model)
-
-    tree.resize(700,600)
-    tree.setAlternatingRowColors(True)
-    tree.setUniformRowHeights(True)
-
-    tree.expandToDepth(1)
-    tree.resizeColumnToContents(0)
-    tree.resizeColumnToContents(1)
-    tree.show()
+    fs_watcher = QtCore.QFileSystemWatcher([file_path])
+    fs_watcher.fileChanged.connect(window.setFilePath)
 
     sys.exit(app.exec_())
